@@ -223,6 +223,11 @@ class FetcherTest extends TestCase {
           operation = Operation.AVERAGE,
           inputColumn = "rating",
           windows = Seq(new Window(1, TimeUnit.DAYS))
+        ),
+        Builders.Aggregation(
+          operation = Operation.SKEW,
+          inputColumn = "rating",
+          windows = Seq(new Window(1, TimeUnit.DAYS))
         )
       ),
       accuracy = Accuracy.TEMPORAL,
@@ -285,6 +290,10 @@ class FetcherTest extends TestCase {
       keyColumns = Seq("vendor"),
       aggregations = Seq(
         Builders.Aggregation(operation = Operation.AVERAGE,
+                             inputColumn = "rating",
+                             windows = Seq(new Window(2, TimeUnit.DAYS), new Window(30, TimeUnit.DAYS)),
+                             buckets = Seq("bucket")),
+        Builders.Aggregation(operation = Operation.SKEW,
                              inputColumn = "rating",
                              windows = Seq(new Window(2, TimeUnit.DAYS), new Window(30, TimeUnit.DAYS)),
                              buckets = Seq("bucket")),
