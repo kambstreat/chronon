@@ -17,8 +17,7 @@
 package ai.chronon.spark
 
 import java.io.{PrintWriter, StringWriter}
-
-import org.slf4j.LoggerFactory
+import org.slf4j.{Logger, LoggerFactory}
 import ai.chronon.aggregator.windowing.TsUtils
 import ai.chronon.api.{Constants, PartitionSpec}
 import ai.chronon.api.Extensions._
@@ -31,17 +30,26 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{AnalysisException, DataFrame, Row, SaveMode, SparkSession}
 import org.apache.spark.storage.StorageLevel
+
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneId}
 import java.util.concurrent.{ExecutorService, Executors}
-
 import scala.collection.{Seq, mutable}
 import scala.collection.immutable
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
 import scala.util.{Failure, Success, Try}
 
 case class TableUtils(sparkSession: SparkSession) {
-  @transient lazy val logger = LoggerFactory.getLogger(getClass)
+
+  def log(message: String)(implicit contextLogger: Logger): Unit = {
+    if (printLogger) {
+      println(message)
+    } else {
+      contextLogger.info(message)
+    }
+  }
+
+  @transient implicit lazy val logger: Logger = LoggerFactory.getLogger(getClass)
 
   private val ARCHIVE_TIMESTAMP_FORMAT = "yyyyMMddHHmmss"
   private lazy val archiveTimestampFormatter = DateTimeFormatter
@@ -49,6 +57,8 @@ case class TableUtils(sparkSession: SparkSession) {
     .withZone(ZoneId.systemDefault())
   val partitionColumn: String =
     sparkSession.conf.get("spark.chronon.partition.column", "ds")
+  val printLogger: Boolean =
+    sparkSession.conf.get("spark.chronon.logging.print", "false").toBoolean
   private val partitionFormat: String =
     sparkSession.conf.get("spark.chronon.partition.format", "yyyy-MM-dd")
   val partitionSpec: PartitionSpec = PartitionSpec(partitionFormat, WindowUtils.Day.millis)
@@ -173,10 +183,10 @@ case class TableUtils(sparkSession: SparkSession) {
       sparkSession.read.format("iceberg").load(tableName)
     } match {
       case Success(_) =>
-        logger.info(s"IcebergCheck: Detected iceberg formatted table $tableName.")
+        log(s"IcebergCheck: Detected iceberg formatted table $tableName.")
         true
       case _ =>
-        logger.info(s"IcebergCheck: Checked table $tableName is not iceberg format.")
+        log(s"IcebergCheck: Checked table $tableName is not iceberg format.")
         false
     }
 
@@ -243,7 +253,7 @@ case class TableUtils(sparkSession: SparkSession) {
   def checkTablePermission(tableName: String,
                            fallbackPartition: String =
                              partitionSpec.before(partitionSpec.at(System.currentTimeMillis()))): Boolean = {
-    logger.info(s"Checking permission for table $tableName...")
+    log(s"Checking permission for table $tableName...")
     try {
       // retrieve one row from the table
       val partitionFilter = lastAvailablePartition(tableName).getOrElse(fallbackPartition)
@@ -297,7 +307,7 @@ case class TableUtils(sparkSession: SparkSession) {
         sql(creationSql)
       } catch {
         case _: TableAlreadyExistsException =>
-          logger.info(s"Table $tableName already exists, skipping creation")
+          log(s"Table $tableName already exists, skipping creation")
         case e: Exception =>
           logger.error(s"Failed to create table $tableName", e)
           throw e
@@ -342,7 +352,7 @@ case class TableUtils(sparkSession: SparkSession) {
       .map(_.replace("at ai.chronon.spark.", ""))
       .mkString("\n")
 
-    logger.info(
+    log(
       s"\n----[Running query coalesced into at most $partitionCount partitions]----\n$query\n----[End of Query]----\n\n Query call path (not an error stack trace): \n$stackTraceStringPretty \n\n --------")
     try {
       // Run the query
@@ -388,14 +398,13 @@ case class TableUtils(sparkSession: SparkSession) {
   def wrapWithCache[T](opString: String, dataFrame: DataFrame)(func: => T): Try[T] = {
     val start = System.currentTimeMillis()
     cacheLevel.foreach { level =>
-      logger.info(s"Starting to cache dataframe before $opString - start @ ${TsUtils.toStr(start)}")
+      log(s"Starting to cache dataframe before $opString - start @ ${TsUtils.toStr(start)}")
       dataFrame.persist(level)
     }
     def clear(): Unit = {
       cacheLevel.foreach(_ => dataFrame.unpersist(blockingCacheEviction))
       val end = System.currentTimeMillis()
-      logger.info(
-        s"Cleared the dataframe cache after $opString - start @ ${TsUtils.toStr(start)} end @ ${TsUtils.toStr(end)}")
+      log(s"Cleared the dataframe cache after $opString - start @ ${TsUtils.toStr(start)} end @ ${TsUtils.toStr(end)}")
     }
     Try {
       val t: T = func
@@ -414,7 +423,7 @@ case class TableUtils(sparkSession: SparkSession) {
                                   stats: Option[DfStats],
                                   sortByCols: Seq[String] = Seq.empty): Unit = {
     wrapWithCache(s"repartition & write to $tableName", df) {
-      logger.info(s"Repartitioning before writing...")
+      log(s"Repartitioning before writing...")
       repartitionAndWriteInternal(df, tableName, saveMode, stats, sortByCols)
     }.get
   }
@@ -441,7 +450,7 @@ case class TableUtils(sparkSession: SparkSession) {
     // set to one if tablePartitionCount=0 to avoid division by zero
     val nonZeroTablePartitionCount = if (tablePartitionCount == 0) 1 else tablePartitionCount
 
-    logger.info(s"$rowCount rows requested to be written into table $tableName")
+    log(s"$rowCount rows requested to be written into table $tableName")
     if (rowCount > 0) {
       val columnSizeEstimate = columnSizeEstimator(df.schema)
 
@@ -468,7 +477,7 @@ case class TableUtils(sparkSession: SparkSession) {
         .flatMap(value => if (value > 0) Some(value) else None)
 
       if (outputParallelism.isDefined) {
-        logger.info(s"Using custom outputParallelism ${outputParallelism.get}")
+        log(s"Using custom outputParallelism ${outputParallelism.get}")
       }
       val dailyFileCount = outputParallelism.getOrElse(dailyFileCountBounded)
 
@@ -477,13 +486,13 @@ case class TableUtils(sparkSession: SparkSession) {
       val saltCol = "random_partition_salt"
       val saltedDf = df.withColumn(saltCol, round(rand() * (dailyFileCount + 1)))
 
-      logger.info(
+      log(
         s"repartitioning data for table $tableName by $shuffleParallelism spark tasks into $tablePartitionCount table partitions and $dailyFileCount files per partition")
       val (repartitionCols: immutable.Seq[String], partitionSortCols: immutable.Seq[String]) =
         if (df.schema.fieldNames.contains(partitionColumn)) {
           (Seq(partitionColumn, saltCol), Seq(partitionColumn) ++ sortByCols)
         } else { (Seq(saltCol), sortByCols) }
-      logger.info(s"Sorting within partitions with cols: $partitionSortCols")
+      log(s"Sorting within partitions with cols: $partitionSortCols")
       saltedDf
         .repartition(shuffleParallelism, repartitionCols.map(saltedDf.col): _*)
         .drop(saltCol)
@@ -491,7 +500,7 @@ case class TableUtils(sparkSession: SparkSession) {
         .write
         .mode(saveMode)
         .insertInto(tableName)
-      logger.info(s"Finished writing to $tableName")
+      log(s"Finished writing to $tableName")
     }
   }
 
@@ -611,7 +620,7 @@ case class TableUtils(sparkSession: SparkSession) {
     val inputMissing = fillablePartitions -- allInputExisting
     val missingPartitions = outputMissing -- inputMissing
     val missingChunks = chunk(missingPartitions)
-    logger.info(s"""
+    log(s"""
                |Unfilled range computation:
                |   Output table: $outputTable
                |   Missing output partitions: ${outputMissing.toSeq.sorted.prettyInline}
@@ -635,14 +644,14 @@ case class TableUtils(sparkSession: SparkSession) {
 
   def dropTableIfExists(tableName: String): Unit = {
     val command = s"DROP TABLE IF EXISTS $tableName"
-    logger.info(s"Dropping table with command: $command")
+    log(s"Dropping table with command: $command")
     sql(command)
   }
 
   def archiveOrDropTableIfExists(tableName: String, timestamp: Option[Instant]): Unit = {
     val archiveTry = Try(archiveTableIfExists(tableName, timestamp))
     archiveTry.failed.foreach { e =>
-      logger.info(s"""Fail to archive table ${tableName}
+      log(s"""Fail to archive table ${tableName}
            |${e.getMessage}
            |Proceed to dropping the table instead.
            |""".stripMargin)
@@ -655,7 +664,7 @@ case class TableUtils(sparkSession: SparkSession) {
       val humanReadableTimestamp = archiveTimestampFormatter.format(timestamp.getOrElse(Instant.now()))
       val finalArchiveTableName = s"${tableName}_${humanReadableTimestamp}"
       val command = s"ALTER TABLE $tableName RENAME TO $finalArchiveTableName"
-      logger.info(s"Archiving table with command: $command")
+      log(s"Archiving table with command: $command")
       sql(command)
     }
   }
@@ -677,7 +686,7 @@ case class TableUtils(sparkSession: SparkSession) {
     val earliestHoleOpt = (inputPartitions -- outputPartitions).reduceLeftOption(Ordering[String].min)
     earliestHoleOpt.foreach { hole =>
       val toDrop = outputPartitions.filter(_ > hole)
-      logger.info(s"""
+      log(s"""
                  |Earliest hole at $hole in output table $outputTable, relative to $inputTable
                  |Input Parts   : ${inputPartitions.toArray.sorted.mkString("Array(", ", ", ")")}
                  |Output Parts  : ${outputPartitions.toArray.sorted.mkString("Array(", ", ", ")")}
@@ -706,7 +715,7 @@ case class TableUtils(sparkSession: SparkSession) {
       val dropSql = s"ALTER TABLE $tableName DROP IF EXISTS $partitionSpecs"
       sql(dropSql)
     } else {
-      logger.info(s"$tableName doesn't exist, please double check before drop partitions")
+      log(s"$tableName doesn't exist, please double check before drop partitions")
     }
   }
 
@@ -718,7 +727,7 @@ case class TableUtils(sparkSession: SparkSession) {
       val toDrop = Stream.iterate(startDate)(partitionSpec.after).takeWhile(_ <= endDate)
       dropPartitions(tableName, toDrop, partitionColumn, subPartitionFilters)
     } else {
-      logger.info(s"$tableName doesn't exist, please double check before drop partitions")
+      log(s"$tableName doesn't exist, please double check before drop partitions")
     }
   }
 
@@ -781,8 +790,7 @@ case class TableUtils(sparkSession: SparkSession) {
     if (excludedFields.nonEmpty) {
       val excludedFieldsStr =
         excludedFields.map(tuple => s"columnName: ${tuple._1} dataType: ${tuple._2.dataType.catalogString}")
-      logger.info(
-        s"""Warning. Detected columns that exist in Hive table but not in updated schema. These are ignored in DDL.
+      log(s"""Warning. Detected columns that exist in Hive table but not in updated schema. These are ignored in DDL.
            |${excludedFieldsStr.mkString("\n")}
            |""".stripMargin)
     }

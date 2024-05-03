@@ -196,13 +196,13 @@ class Join(joinConf: api.Join,
         (joinPartMetadata, coveringSets)
       }
 
-    logger.info(
+    tableUtils.log(
       s"\n======= CoveringSet for JoinPart ${joinConf.metaData.name} for PartitionRange(${leftRange.start}, ${leftRange.end}) =======\n")
     coveringSetsPerJoinPart.foreach {
       case (joinPartMetadata, coveringSets) =>
-        logger.info(s"Bootstrap sets for join part ${joinPartMetadata.joinPart.groupBy.metaData.name}")
+        tableUtils.log(s"Bootstrap sets for join part ${joinPartMetadata.joinPart.groupBy.metaData.name}")
         coveringSets.foreach { coveringSet =>
-          logger.info(
+          tableUtils.log(
             s"CoveringSet(hash=${coveringSet.hashes.prettyInline}, rowCount=${coveringSet.rowCount}, isCovering=${coveringSet.isCovering})")
         }
     }
@@ -221,7 +221,7 @@ class Join(joinConf: api.Join,
         }
       val wheres = Seq(s"ds >= '${effectiveRange.start}'", s"ds <= '${effectiveRange.end}'")
       val sql = QueryUtils.build(null, partTable, wheres)
-      logger.info(s"Pulling data from joinPart table with: $sql")
+      tableUtils.log(s"Pulling data from joinPart table with: $sql")
       val df = tableUtils.sparkSession.sql(sql)
       (joinPart, df)
     }
@@ -436,7 +436,7 @@ class Join(joinConf: api.Join,
 
     val result = baseDf.select(finalOutputColumns: _*)
     if (showDf) {
-      logger.info(s"printing results for join: ${joinConf.metaData.name}")
+      tableUtils.log(s"printing results for join: ${joinConf.metaData.name}")
       result.prettyPrint()
     }
     result
@@ -505,7 +505,7 @@ class Join(joinConf: api.Join,
         val joinedDf = parts.foldLeft(initDf) {
           case (partialDf, part) => {
 
-            logger.info(s"\nProcessing Bootstrap from table ${part.table} for range ${unfilledRange}")
+            tableUtils.log(s"\nProcessing Bootstrap from table ${part.table} for range ${unfilledRange}")
 
             val bootstrapRange = if (part.isSetQuery) {
               unfilledRange.intersect(PartitionRange(part.startPartition, part.endPartition)(tableUtils))
@@ -513,7 +513,7 @@ class Join(joinConf: api.Join,
               unfilledRange
             }
             if (!bootstrapRange.valid) {
-              logger.info(s"partition range of bootstrap table ${part.table} is beyond unfilled range")
+              tableUtils.log(s"partition range of bootstrap table ${part.table} is beyond unfilled range")
               partialDf
             } else {
               var bootstrapDf = tableUtils.sql(
@@ -559,7 +559,7 @@ class Join(joinConf: api.Join,
       })
 
     val elapsedMins = (System.currentTimeMillis() - startMillis) / (60 * 1000)
-    logger.info(s"Finished computing bootstrap table ${joinConf.metaData.bootstrapTable} in ${elapsedMins} minutes")
+    tableUtils.log(s"Finished computing bootstrap table ${joinConf.metaData.bootstrapTable} in ${elapsedMins} minutes")
 
     tableUtils.sql(range.genScanQuery(query = null, table = bootstrapTable))
   }
@@ -578,7 +578,7 @@ class Join(joinConf: api.Join,
       return Some(bootstrapDfWithStats)
     }
     val filterExpr = CoveringSet.toFilterExpression(coveringSets)
-    logger.info(s"Using covering set filter: $filterExpr")
+    tableUtils.log(s"Using covering set filter: $filterExpr")
     val filteredDf = bootstrapDf.where(filterExpr)
     val filteredCount = filteredDf.count()
     if (bootstrapDfWithStats.count == filteredCount) { // counting is faster than computing stats
