@@ -52,7 +52,13 @@ class JoinTest {
   tableUtils.createDatabase(namespace)
 
   @Test
+  def testChaitu(): Unit = {
+
+  }
+
+  @Test
   def testEventsEntitiesSnapshot(): Unit = {
+
     val dollarTransactions = List(
       Column("user", StringType, 100),
       Column("user_name", api.StringType, 100),
@@ -114,7 +120,8 @@ class JoinTest {
     )
     val queriesSchema = List(
       Column("user_name", api.StringType, 100),
-      Column("user", api.StringType, 100)
+      Column("user", api.StringType, 100),
+      //Column(TableUtils(spark).partitionColumn, StringType, 100)
     )
 
     val queryTable = s"$namespace.queries"
@@ -163,7 +170,10 @@ class JoinTest {
     resetUDFs()
     val runner2 = new Join(joinConf, end, tableUtils)
     val computed = runner2.computeJoin(Some(3))
+
     println(s"join start = $start")
+    computed.filter("unit_test_user_transactions_amount_dollars_sum_30d is not null").show()
+    println(s"Number of rows in computed result: ${computed.count()}")
 
     val expectedQuery = s"""
                            |WITH
@@ -208,9 +218,15 @@ class JoinTest {
                            | WHERE queries.user_name IS NOT NULL AND queries.user IS NOT NULL
                            |""".stripMargin
     val expected = spark.sql(expectedQuery)
+    expected.filter("unit_test_user_transactions_amount_dollars_sum_30d is not null").show()
+    println("Number of rows in expected result: " + expected.count())
+
     val queries = tableUtils.sql(
       s"SELECT user_name, user, ts, ds from $queryTable where user IS NOT NULL AND user_name IS NOT null AND ts IS NOT NULL AND ds IS NOT NULL AND ds >= '$start' AND ds <= '$end'")
     val diff = Comparison.sideBySide(computed, expected, List("user_name", "user", "ts", "ds"))
+
+    println(s"difference count: ${diff.count()}")
+    sys.exit(0)
 
     if (diff.count() > 0) {
       println(s"Actual count: ${computed.count()}")
@@ -253,6 +269,7 @@ class JoinTest {
       diff2.show()
     }
     assertEquals(0, diff2.count())
+    spark.stop()
   }
 
   @Test

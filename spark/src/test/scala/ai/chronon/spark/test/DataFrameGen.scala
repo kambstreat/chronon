@@ -49,6 +49,13 @@ object DataFrameGen {
       from_unixtime(generated.col(Constants.TimeColumn) / 1000, TableUtils(spark).partitionSpec.format))
   }
 
+  def eventsWithPartitionColumn(spark: SparkSession, columns: Seq[Column], count: Int, partitions: Int): DataFrame = {
+    gen(spark, columns :+ Column(Constants.TimeColumn, LongType, partitions), count)
+    //generated.withColumn(
+    //  TableUtils(spark).partitionColumn,
+    //  from_unixtime(generated.col(Constants.TimeColumn) / 1000, TableUtils(spark).partitionSpec.format))
+  }
+
   //  Generates Entity data
   def entities(spark: SparkSession, columns: Seq[Column], count: Int, partitions: Int): DataFrame = {
     gen(spark, columns :+ Column(TableUtils(spark).partitionColumn, StringType, partitions), count)
