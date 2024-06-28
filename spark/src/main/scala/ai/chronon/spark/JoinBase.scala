@@ -424,7 +424,7 @@ abstract class JoinBase(joinConf: api.Join,
     try {
       analyzer.analyzeJoin(joinConf, validationAssert = true)
       metrics.gauge(Metrics.Name.validationSuccess, 1)
-      logger.info("Join conf validation succeeded. No error found.")
+      println("Join conf validation succeeded. No error found.")
     } catch {
       case ex: AssertionError =>
         metrics.gauge(Metrics.Name.validationFailure, 1)
@@ -444,7 +444,7 @@ abstract class JoinBase(joinConf: api.Join,
     // Check semantic hash before overwriting left side
     val source = joinConf.left
     if (useBootstrapForLeft) {
-      logger.info("Overwriting left side to use saved Bootstrap table...")
+      println("Overwriting left side to use saved Bootstrap table...")
       source.overwriteTable(bootstrapTable)
       val query = source.query
       // sets map and where clauses already applied to bootstrap transformation
@@ -461,14 +461,14 @@ abstract class JoinBase(joinConf: api.Join,
                                                 endPartition,
                                                 overrideStartPartition,
                                                 joinConf.historicalBackfill)
-    logger.info(s"Join range to fill $rangeToFill")
+    println(s"Join range to fill $rangeToFill")
     val unfilledRanges = tableUtils
       .unfilledRanges(outputTable, rangeToFill, Some(Seq(joinConf.left.table)), skipFirstHole = skipFirstHole)
       .getOrElse(Seq.empty)
 
     def finalResult: DataFrame = tableUtils.sql(rangeToFill.genScanQuery(null, outputTable))
     if (unfilledRanges.isEmpty) {
-      logger.info(s"\nThere is no data to compute based on end partition of ${rangeToFill.end}.\n\n Exiting..")
+      println(s"\nThere is no data to compute based on end partition of ${rangeToFill.end}.\n\n Exiting..")
       return Some(finalResult)
     }
 
@@ -489,9 +489,9 @@ abstract class JoinBase(joinConf: api.Join,
           leftDf(joinConf, wholeRange, tableUtils, limit = Some(tableUtils.smallModeNumRowsCutoff + 1)).get.count()
         val result = thresholdCount <= tableUtils.smallModeNumRowsCutoff
         if (result) {
-          logger.info(s"Counted $thresholdCount rows, running join in small mode.")
+          println(s"Counted $thresholdCount rows, running join in small mode.")
         } else {
-          logger.info(
+          println(
             s"Counted greater than ${tableUtils.smallModeNumRowsCutoff} rows, proceeding with normal computation.")
         }
         result
@@ -506,12 +506,12 @@ abstract class JoinBase(joinConf: api.Join,
       stepRanges
     }
 
-    logger.info(s"Join ranges to compute: ${effectiveRanges.map { _.toString }.pretty}")
+    println(s"Join ranges to compute: ${effectiveRanges.map { _.toString }.pretty}")
     effectiveRanges.zipWithIndex.foreach {
       case (range, index) =>
         val startMillis = System.currentTimeMillis()
         val progress = s"| [${index + 1}/${effectiveRanges.size}]"
-        logger.info(s"Computing join for range: ${range.toString}  $progress")
+        println(s"Computing join for range: ${range.toString}  $progress")
         leftDf(joinConf, range, tableUtils).map { leftDfInRange =>
           if (showDf) leftDfInRange.prettyPrint()
           // set autoExpand = true to ensure backward compatibility due to column ordering changes
@@ -519,19 +519,19 @@ abstract class JoinBase(joinConf: api.Join,
           if (selectedJoinParts.isDefined) {
             assert(finalDf.isEmpty,
                    "The arg `selectedJoinParts` is defined, so no final join is required. `finalDf` should be empty")
-            logger.info(s"Skipping writing to the output table for range: ${range.toString}  $progress")
+            println(s"Skipping writing to the output table for range: ${range.toString}  $progress")
             return None
           } else {
             finalDf.get.save(outputTable, tableProps, autoExpand = true)
             val elapsedMins = (System.currentTimeMillis() - startMillis) / (60 * 1000)
             metrics.gauge(Metrics.Name.LatencyMinutes, elapsedMins)
             metrics.gauge(Metrics.Name.PartitionCount, range.partitions.length)
-            logger.info(
+            println(
               s"Wrote to table $outputTable, into partitions: ${range.toString} $progress in $elapsedMins mins")
           }
         }
     }
-    logger.info(s"Wrote to table $outputTable, into partitions: $unfilledRanges")
+    println(s"Wrote to table $outputTable, into partitions: $unfilledRanges")
     Some(finalResult)
   }
 }

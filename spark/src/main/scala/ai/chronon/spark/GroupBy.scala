@@ -121,7 +121,7 @@ class GroupBy(val aggregations: Seq[api.Aggregation],
       inputDf -> updateFunc
     }
 
-    logger.info(s"""
+    println(s"""
         |Prepped input schema
         |${preppedInputDf.schema.pretty}
         |""".stripMargin)
@@ -410,7 +410,7 @@ object GroupBy {
     val result = groupByConf.deepCopy()
     val newSources: java.util.List[api.Source] = groupByConf.sources.toScala.map { source =>
       if (source.isSetJoinSource) {
-        logger.info("Join source detected. Materializing the join.")
+        println("Join source detected. Materializing the join.")
         val joinSource = source.getJoinSource
         val joinConf = joinSource.join
         // materialize the table with the right end date. QueryRange.end could be shifted for temporal events
@@ -423,7 +423,7 @@ object GroupBy {
         if (computeDependency) {
           val df = join.computeJoin()
           if (showDf) {
-            logger.info(
+            println(
               s"printing output data from groupby::join_source: ${groupByConf.metaData.name}::${joinConf.metaData.name}")
             df.prettyPrint()
           }
@@ -463,7 +463,7 @@ object GroupBy {
            skewFilter: Option[String] = None,
            finalize: Boolean = true,
            showDf: Boolean = false): GroupBy = {
-    logger.info(s"\n----[Processing GroupBy: ${groupByConfOld.metaData.name}]----")
+    println(s"\n----[Processing GroupBy: ${groupByConfOld.metaData.name}]----")
     val groupByConf = replaceJoinSource(groupByConfOld, queryRange, tableUtils, computeDependency, showDf)
     val inputDf = groupByConf.sources.toScala
       .map { source =>
@@ -497,7 +497,7 @@ object GroupBy {
     val keyColumns = groupByConf.getKeyColumns.toScala
     val skewFilteredDf = skewFilter
       .map { sf =>
-        logger.info(s"$logPrefix filtering using skew filter:\n    $sf")
+        println(s"$logPrefix filtering using skew filter:\n    $sf")
         val filtered = inputDf.filter(sf)
         filtered
       }
@@ -509,7 +509,7 @@ object GroupBy {
     val nullFilterClause = groupByConf.keyColumns.toScala.map(key => s"($key IS NOT NULL)").mkString(" OR ")
     val nullFiltered = processedInputDf.filter(nullFilterClause)
     if (showDf) {
-      logger.info(s"printing input date for groupBy: ${groupByConf.metaData.name}")
+      println(s"printing input date for groupBy: ${groupByConf.metaData.name}")
       nullFiltered.prettyPrint()
     }
 
@@ -541,7 +541,7 @@ object GroupBy {
       } else null
 
       if (showDf && df != null) {
-        logger.info(s"printing mutation data for groupBy: ${groupByConf.metaData.name}")
+        println(s"printing mutation data for groupBy: ${groupByConf.metaData.name}")
         df.prettyPrint()
       }
 
@@ -584,7 +584,7 @@ object GroupBy {
     val queryableDataRange =
       PartitionRange(dataProfile.earliestRequired, Seq(queryEnd, dataProfile.latestAllowed).max)(tableUtils)
     val intersectedRange = sourceRange.intersect(queryableDataRange)
-    logger.info(s"""
+    println(s"""
                |Computing intersected range as:
                |   query range: $queryRange
                |   query window: $window
@@ -632,14 +632,14 @@ object GroupBy {
         Some(Constants.TimeColumn -> Option(source.query.timeColumn).getOrElse(dsBasedTimestamp))
       }
     }
-    logger.info(s"""
+    println(s"""
          |Time Mapping: $timeMapping
          |""".stripMargin)
     metaColumns ++= timeMapping
 
     val partitionConditions = intersectedRange.map(_.whereClauses()).getOrElse(Seq.empty)
 
-    logger.info(s"""
+    println(s"""
          |Rendering source query:
          |   intersected/effective scan range: $intersectedRange
          |   partitionConditions: $partitionConditions
@@ -696,25 +696,25 @@ object GroupBy {
                                 skipFirstHole = skipFirstHole)
 
     if (groupByUnfilledRangesOpt.isEmpty) {
-      logger.info(s"""Nothing to backfill for $outputTable - given
+      println(s"""Nothing to backfill for $outputTable - given
            |endPartition of $endPartition
            |backfill start of $overrideStart
            |Exiting...""".stripMargin)
       return
     }
     val groupByUnfilledRanges = groupByUnfilledRangesOpt.get
-    logger.info(s"group by unfilled ranges: $groupByUnfilledRanges")
+    println(s"group by unfilled ranges: $groupByUnfilledRanges")
     val exceptions = mutable.Buffer.empty[String]
     groupByUnfilledRanges.foreach {
       case groupByUnfilledRange =>
         try {
           val stepRanges = stepDays.map(groupByUnfilledRange.steps).getOrElse(Seq(groupByUnfilledRange))
-          logger.info(s"Group By ranges to compute: ${stepRanges.map {
+          println(s"Group By ranges to compute: ${stepRanges.map {
             _.toString
           }.pretty}")
           stepRanges.zipWithIndex.foreach {
             case (range, index) =>
-              logger.info(s"Computing group by for range: $range [${index + 1}/${stepRanges.size}]")
+              println(s"Computing group by for range: $range [${index + 1}/${stepRanges.size}]")
               val groupByBackfill = from(groupByConf, range, tableUtils, computeDependency = true)
               val outputDf = groupByConf.dataModel match {
                 // group by backfills have to be snapshot only
@@ -728,9 +728,9 @@ object GroupBy {
                 val result = outputDf.select(finalOutputColumns: _*)
                 result.save(outputTable, tableProps)
               }
-              logger.info(s"Wrote to table $outputTable, into partitions: $range")
+              println(s"Wrote to table $outputTable, into partitions: $range")
           }
-          logger.info(s"Wrote to table $outputTable for range: $groupByUnfilledRange")
+          println(s"Wrote to table $outputTable for range: $groupByUnfilledRange")
 
         } catch {
           case err: Throwable =>
