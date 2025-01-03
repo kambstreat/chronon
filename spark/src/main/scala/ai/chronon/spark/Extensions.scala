@@ -140,14 +140,16 @@ object Extensions {
              partitionColumns: Seq[String] = Seq(tableUtils.partitionColumn),
              autoExpand: Boolean = false,
              stats: Option[DfStats] = None,
-             sortByCols: Seq[String] = Seq.empty): Unit = {
+             sortByCols: Seq[String] = Seq.empty,
+             tableLocation: String = ""): Unit = {
       TableUtils(df.sparkSession).insertPartitions(df,
                                                    tableName,
                                                    tableProperties,
                                                    partitionColumns,
                                                    autoExpand = autoExpand,
                                                    stats = stats,
-                                                   sortByCols = sortByCols)
+                                                   sortByCols = sortByCols,
+                                                   tableLocation = tableLocation)
     }
 
     def saveUnPartitioned(tableName: String, tableProperties: Map[String, String] = null): Unit = {

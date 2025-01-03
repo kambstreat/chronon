@@ -413,6 +413,7 @@ class Runner:
         self.start_ds = (
             args.start_ds if hasattr(args, "start_ds") and args.start_ds else None
         )
+        self.table_location = args.table_location
         self.parallelism = (
             int(args.parallelism)
             if hasattr(args, "parallelism") and args.parallelism
@@ -566,7 +567,10 @@ class Runner:
         override_start_partition_arg = (
             " --start-partition-override=" + start_ds if start_ds else ""
         )
-        final_args = base_args + " " + str(self.args) + override_start_partition_arg
+        table_location_arg = (
+            "--table-location=" + self.table_location
+        )
+        final_args = base_args + " " + str(self.args) + override_start_partition_arg + " " + table_location_arg
         return final_args
 
 
@@ -701,6 +705,10 @@ if __name__ == "__main__":
         "--render-info",
         help="Path to script rendering additional information of the given config. "
         + "Only applicable when mode is set to info",
+    )
+    parser.add_argument(
+        "--table-location",
+        help="Location where the table is stored for AWS Glue Catalog",
     )
     set_defaults(parser)
     pre_parse_args, _ = parser.parse_known_args()

@@ -297,7 +297,8 @@ case class TableUtils(sparkSession: SparkSession) {
                        fileFormat: String = "PARQUET",
                        autoExpand: Boolean = false,
                        stats: Option[DfStats] = None,
-                       sortByCols: Seq[String] = Seq.empty): Unit = {
+                       sortByCols: Seq[String] = Seq.empty,
+                       tableLocation: String = ""): Unit = {
     // partitions to the last
     val dfRearranged: DataFrame = if (!df.columns.endsWith(partitionColumns)) {
       val colOrder = df.columns.diff(partitionColumns) ++ partitionColumns
@@ -307,7 +308,7 @@ case class TableUtils(sparkSession: SparkSession) {
     }
 
     if (!tableExists(tableName)) {
-      val creationSql = createTableSql(tableName, dfRearranged.schema, partitionColumns, tableProperties, fileFormat)
+      val creationSql = createTableSql(tableName, dfRearranged.schema, partitionColumns, tableProperties, fileFormat, tableLocation)
       try {
         sql(creationSql)
       } catch {
@@ -514,7 +515,9 @@ case class TableUtils(sparkSession: SparkSession) {
                              schema: StructType,
                              partitionColumns: Seq[String],
                              tableProperties: Map[String, String],
-                             fileFormat: String): String = {
+                             fileFormat: String,
+                             tableLocation: String = ""
+                            ): String = {
     val fieldDefinitions = schema
       .filterNot(field => partitionColumns.contains(field.name))
       .map(field => s"`${field.name}` ${field.dataType.catalogString}")
@@ -550,7 +553,12 @@ case class TableUtils(sparkSession: SparkSession) {
     } else {
       s"STORED AS $fileFormat"
     }
-    Seq(createFragment, partitionFragment, fileFormatString, propertiesFragment).mkString("\n")
+    val tableLocationPath = if (tableLocation.nonEmpty) {
+      s"LOCATION '$tableLocation'"
+    } else {
+      ""
+    }
+    Seq(createFragment, partitionFragment, fileFormatString, propertiesFragment, tableLocationPath).mkString("\n")
   }
 
   def alterTableProperties(tableName: String,

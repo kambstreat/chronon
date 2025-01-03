@@ -675,7 +675,9 @@ object GroupBy {
                       tableUtils: TableUtils,
                       stepDays: Option[Int] = None,
                       overrideStartPartition: Option[String] = None,
-                      skipFirstHole: Boolean = true): Unit = {
+                      skipFirstHole: Boolean = true,
+                      tableLocation: String = ""
+                     ): Unit = {
     assert(
       groupByConf.backfillStartDate != null,
       s"GroupBy:${groupByConf.metaData.name} has null backfillStartDate. This needs to be set for offline backfilling.")
@@ -721,11 +723,11 @@ object GroupBy {
                 case Events   => groupByBackfill.snapshotEvents(range)
               }
               if (!groupByConf.hasDerivations) {
-                outputDf.save(outputTable, tableProps)
+                outputDf.save(outputTable, tableProps, tableLocation=tableLocation)
               } else {
                 val finalOutputColumns = groupByConf.derivationsScala.finalOutputColumn(outputDf.columns).toSeq
                 val result = outputDf.select(finalOutputColumns: _*)
-                result.save(outputTable, tableProps)
+                result.save(outputTable, tableProps, tableLocation=tableLocation)
               }
               logger.info(s"Wrote to table $outputTable, into partitions: $range")
           }
