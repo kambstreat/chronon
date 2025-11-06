@@ -801,20 +801,92 @@ object GroupBy {
 
     val (_, incrementalDf: DataFrame) =  incrementalQueryableRange.scanQueryStringAndDf(null, incrementalOutputTable)
 
-    val incrementalAggregations = aggregationParts.zip(groupByConf.getAggregations.toScala).map{ case (part, agg) =>
-      val newAgg = agg.deepCopy()
-      newAgg.setInputColumn(part.incrementalOutputColumnName)
-      // Convert COUNT to SUM when reading from incremental IRs
-      if (newAgg.operation == Operation.COUNT) {
-        newAgg.setOperation(Operation.SUM)
+    // Use SawtoothAggregator to read incremental output and finalize
+    val keyColumns = groupByConf.getKeyColumns.toScala
+    val aggregations = groupByConf.getAggregations.toScala
+
+    // Build the selected schema from aggregation parts
+    // The schema is derived from the flattened aggregation's input columns
+    val flattenedAggParts = aggregations.flatMap(_.unWindowed)
+    val selectedSchema = flattenedAggParts.map { aggPart =>
+      val inputCol = aggPart.inputColumn
+      val dataType = groupByConf.getSources.toScala
+        .flatMap { source =>
+          if (source.isSetEvents) {
+            source.getEvents.getQuery.selects.toScala.find(_._1 == inputCol)
+          } else if (source.isSetEntities) {
+            source.getEntities.getQuery.selects.toScala.find(_._1 == inputCol)
+          } else {
+            None
+          }
+        }
+        .headOption
+        .map(_._2)
+        .getOrElse(api.DataType.StringType) // default fallback
+      (inputCol, dataType)
+    }.toArray
+
+    val resolution = DailyResolution
+    val sawtoothAggregator = new SawtoothAggregator(aggregations, selectedSchema, resolution)
+
+    // Reconstruct hops from the flattened incremental DataFrame
+    val keySchema = StructType(keyColumns.map(col => incrementalDf.schema(col)))
+    val keyBuilder: Row => KeyWithHash = FastHashing.generateKeyBuilder(keyColumns.toArray, incrementalDf.schema)
+
+    val hopsRdd: RDD[(KeyWithHash, HopsAggregator.OutputArrayType)] = incrementalDf.rdd
+      .keyBy(keyBuilder)
+      .groupByKey()
+      .mapValues { rows =>
+        // Group rows by hop size (all rows are daily hops in incremental mode)
+        val sortedRows = rows.toArray.sortBy { row =>
+          val tsIndex = incrementalDf.schema.fieldIndex(Constants.TimeColumn)
+          row.getLong(tsIndex)
+        }
+
+        // For DailyResolution, we have only one hop size (day)
+        val dailyHops = sortedRows.map { row =>
+          val tsIndex = incrementalDf.schema.fieldIndex(Constants.TimeColumn)
+          val timestamp = row.getLong(tsIndex)
+
+          // Extract IR values from the row
+          val irValues = aggregationParts.map { part =>
+            val colName = part.incrementalOutputColumnName
+            val colIndex = incrementalDf.schema.fieldIndex(colName)
+            row.get(colIndex)
+          }.toArray
+
+          // Append timestamp at the end
+          irValues :+ timestamp
+        }
+
+        // OutputArrayType is Array[Array[HopIr]], for DailyResolution we have one array
+        Array(dailyHops)
       }
-      newAgg
+
+    // Compute windows from hops using SawtoothAggregator
+    val endTimes: Array[Long] = range.toTimePoints
+    val shiftedEndTimes = endTimes.map(_ + tableUtils.partitionSpec.spanMillis)
+
+    val outputRdd: RDD[(Array[Any], Array[Any])] = hopsRdd.flatMap {
+      case (keyWithHash, hopsArrays) =>
+        val irs = sawtoothAggregator.computeWindows(hopsArrays, shiftedEndTimes)
+        irs.indices.flatMap { i =>
+          val windowAggregator = new RowAggregator(selectedSchema, flattenedAggParts)
+          val result = windowAggregator.finalize(irs(i))
+          if (result.forall(_ == null)) None
+          else Some((keyWithHash.data :+ tableUtils.partitionSpec.at(endTimes(i)), result))
+        }
     }
 
+    // Convert to DataFrame
+    val postAggSchema = new RowAggregator(selectedSchema, flattenedAggParts).outputSchema
+    val finalKeySchema = StructType(keySchema ++ Seq(StructField(tableUtils.partitionColumn, StringType)))
+    val outputDf = KvRdd(outputRdd, finalKeySchema, SparkConversions.fromChrononSchema(postAggSchema)).toFlatDf
+
     new GroupBy(
-      incrementalAggregations,
-      groupByConf.getKeyColumns.toScala,
-      incrementalDf,
+      aggregations,
+      keyColumns,
+      outputDf,
       () => null,
       finalize = true,
       userInputAggregations=groupByConf.aggregations.toScala
