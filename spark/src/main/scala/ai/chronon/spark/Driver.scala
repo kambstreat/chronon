@@ -142,9 +142,12 @@ object Driver {
     val confPath: ScallopOption[String] = opt[String](required = true, descr = "Path to conf")
 
     val runFirstHole: ScallopOption[Boolean] =
-      opt[Boolean](required = false,
-                   default = Some(false),
-                   descr = "Skip the first unfilled partition range if some future partitions have been populated.")
+      opt[Boolean](
+        required = false,
+        default = Some(false),
+        descr =
+          "By default, Chronon skips partitions earlier than your earliest existing output partition, assuming the gap is due to retention policy. Use this flag to override that behavior and backfill those earlier partitions."
+      )
 
     val useDeltaCatalog: ScallopOption[Boolean] =
       opt[Boolean](required = false, default = Some(false), descr = "Enable the use of the delta lake catalog")
@@ -467,7 +470,8 @@ object Driver {
         tableUtils,
         args.stepDays.toOption,
         args.startPartitionOverride.toOption,
-        !args.runFirstHole()
+        !args.runFirstHole(),
+        Option(args.groupByConf.isIncremental).getOrElse(false)
       )
 
       if (args.shouldExport()) {
@@ -573,16 +577,24 @@ object Driver {
         opt[String](required = false, descr = "Hive table to write output metadata to")
       val outputTablePropertiesJson: ScallopOption[String] =
         opt[String](required = false, descr = "Optional output table properties in JSON format")
+      val processEmbeddedGroupBys: ScallopOption[Boolean] =
+        opt[Boolean](required = false,
+                     default = Some(false),
+                     descr =
+                       "When true, extract and enrich GroupBys embedded in Joins that have no standalone config file")
       override def subcommandName() = "metadata-export"
     }
 
     def run(args: Args): Unit = {
       val dsOpt: Option[String] = if (args.endDate().isEmpty) None else Some(args.endDate())
-      MetadataExporter.run(args.inputRootPath(),
-                           args.outputRootPath.toOption,
-                           args.outputTableName.toOption,
-                           dsOpt,
-                           args.outputTablePropertiesJson.toOption)
+      MetadataExporter.run(
+        args.inputRootPath(),
+        args.outputRootPath.toOption,
+        args.outputTableName.toOption,
+        dsOpt,
+        args.outputTablePropertiesJson.toOption,
+        args.processEmbeddedGroupBys()
+      )
     }
   }
 
@@ -1071,9 +1083,8 @@ object Driver {
         case e: Throwable =>
           e.printStackTrace()
           logger.error("Model Transform Batch Job failed", e)
-          System.exit(-1)
+          throw e
       }
-      System.exit(0) // Terminate once completion to shutdown execution context
     }
   }
 
